@@ -1,12 +1,9 @@
 import os
-from manga_api import app, db
-from manga_api.models import Bookmark, Manga
+
+from manga_api import app
 
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-
     print('\n=== Available Routes ===')
     for rule in app.url_map.iter_rules():
         print(f'{rule.endpoint}: {rule.rule}')
