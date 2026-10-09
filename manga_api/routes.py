@@ -2,6 +2,8 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
+from database.db import execute_query, execute_write
+
 from .services import (
     LIST_CACHE,
     fetch_tenrai,
@@ -10,9 +12,7 @@ from .services import (
     save_many,
 )
 
-
 api = Blueprint('api', __name__)
-
 
 def ok_list(data, source, **extra):
     return jsonify({
@@ -21,7 +21,6 @@ def ok_list(data, source, **extra):
         'data': data,
         **extra,
     }), 200
-
 
 def serve_list(cache_key, path, params, **extra):
     entry = LIST_CACHE.get(cache_key)
@@ -40,7 +39,6 @@ def serve_list(cache_key, path, params, **extra):
     )
     return ok_list(mangas, 'tenrai', **extra)
 
-
 @api.route('/api/manga', methods=['GET'])
 def get_all_manga():
     page = max(request.args.get('page', 1, type=int), 1)
@@ -50,7 +48,6 @@ def get_all_manga():
         {'limit': 25, 'page': page},
         page=page,
     )
-
 
 @api.route('/api/manga/search', methods=['GET'])
 def search_manga():
@@ -65,7 +62,6 @@ def search_manga():
         {'q': query, 'limit': 20, 'page': page},
         page=page,
     )
-
 
 @api.route('/api/manga/<int:id>', methods=['GET'])
 def get_manga_detail(id):
@@ -93,7 +89,6 @@ def get_manga_detail(id):
         'data': parsed,
     }), 200
 
-
 @api.route('/api/manga/genre/<int:genre_id>', methods=['GET'])
 def get_by_genre(genre_id):
     page = max(request.args.get('page', 1, type=int), 1)
@@ -104,14 +99,104 @@ def get_by_genre(genre_id):
         page=page,
     )
 
+# seluruh fitur bookmark per user
+VALID_READ_STATUS = ('reading', 'plan', 'completed')
 
+def get_user_id():
+    """Ambil user_id dari query string (?user_id=) atau body JSON."""
+    data = request.get_json(silent=True) or {}
+    raw = request.args.get('user_id') or data.get('user_id')
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+# Ambil semua bookmark milik user (dipakai halaman Rak Buku)
 @api.route('/api/bookmark', methods=['GET'])
 def get_bookmarks():
+    user_id = get_user_id()
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'Login dulu'}), 401
+
+    rows = execute_query(
+        "SELECT manga_id AS mal_id, title, image_url AS link_gambar, read_status "
+        "FROM bookmarks WHERE user_id = %s ORDER BY created_at DESC",
+        (user_id,),
+    )
+    for row in rows:
+        row['bookmark'] = True
+    return jsonify({'status': 'success', 'data': rows}), 200
+
+# Simpan bookmark (kalau sudah ada, judul dan gambar diperbarui; status tidak diubah)
+@api.route('/api/bookmark', methods=['POST'])
+def add_bookmark():
+    data = request.get_json(silent=True) or {}
+    user_id = get_user_id()
+    manga_id = data.get('manga_id')
+    if not user_id or not manga_id:
+        return jsonify({'status': 'error', 'message': 'user_id dan manga_id wajib'}), 400
+
+    execute_write(
+        "INSERT INTO bookmarks (user_id, manga_id, title, image_url) "
+        "VALUES (%s, %s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE title = VALUES(title), image_url = VALUES(image_url)",
+        (user_id, manga_id, (data.get('title') or '')[:255], (data.get('image_url') or '')[:500]),
+    )
+    return jsonify({'status': 'success', 'message': 'Bookmark disimpan'}), 201
+
+# Cek satu manga: sudah di-bookmark atau belum, dan apa statusnya
+@api.route('/api/bookmark/<int:manga_id>', methods=['GET'])
+def is_bookmarked(manga_id):
+    user_id = get_user_id()
+    if not user_id:
+        return jsonify({'status': 'success', 'isBookmarked': False}), 200
+
+    rows = execute_query(
+        "SELECT read_status FROM bookmarks WHERE user_id = %s AND manga_id = %s LIMIT 1",
+        (user_id, manga_id),
+    )
     return jsonify({
         'status': 'success',
-        'data': [],
+        'isBookmarked': bool(rows),
+        'readStatus': rows[0]['read_status'] if rows else None,
     }), 200
 
+# UPDATE: ubah status baca bookmark
+@api.route('/api/bookmark/<int:manga_id>', methods=['PUT'])
+def update_bookmark(manga_id):
+    data = request.get_json(silent=True) or {}
+    user_id = get_user_id()
+    read_status = data.get('read_status')
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'Login dulu'}), 401
+    if read_status not in VALID_READ_STATUS:
+        return jsonify({'status': 'error', 'message': 'Status tidak valid'}), 400
+
+    exists = execute_query(
+        "SELECT id FROM bookmarks WHERE user_id = %s AND manga_id = %s LIMIT 1",
+        (user_id, manga_id),
+    )
+    if not exists:
+        return jsonify({'status': 'error', 'message': 'Bookmark tidak ditemukan'}), 404
+
+    execute_write(
+        "UPDATE bookmarks SET read_status = %s WHERE user_id = %s AND manga_id = %s",
+        (read_status, user_id, manga_id),
+    )
+    return jsonify({'status': 'success', 'message': 'Status diperbarui'}), 200
+
+# DELETE: hapus bookmark
+@api.route('/api/bookmark/<int:manga_id>', methods=['DELETE'])
+def remove_bookmark(manga_id):
+    user_id = get_user_id()
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'Login dulu'}), 401
+
+    execute_write(
+        "DELETE FROM bookmarks WHERE user_id = %s AND manga_id = %s",
+        (user_id, manga_id),
+    )
+    return jsonify({'status': 'success', 'message': 'Bookmark dihapus'}), 200
 
 @api.route('/api', methods=['GET'])
 @api.route('/api/health', methods=['GET'])
