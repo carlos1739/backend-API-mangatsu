@@ -1,5 +1,6 @@
 import re
 
+import pymysql
 from flask import Blueprint, jsonify, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -69,3 +70,34 @@ def login():
             },
         }
     ), 200
+
+
+@auth_bp.route("/api/delete-account", methods=["DELETE"])
+def delete_account():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    print(f"[DELETE] email={email!r}")  # untuk debugging, boleh dihapus nanti
+
+    if not email or not password:
+        return jsonify({"status": "error", "message": "Email dan password wajib diisi"}), 400
+
+    user = execute_query(
+        "SELECT id, password FROM users WHERE email = %s LIMIT 1",
+        (email,),
+    )
+    if not user or not check_password_hash(user[0]["password"], password):
+        return jsonify({"status": "error", "message": "Password salah"}), 401
+
+    try:
+        execute_write("DELETE FROM users WHERE id = %s", (user[0]["id"],))
+    except pymysql.err.IntegrityError:
+        return jsonify({
+            "status": "error",
+            "message": "Akun masih terhubung dengan data lain (foreign key)",
+        }), 409
+    except Exception as error:
+        return jsonify({"status": "error", "message": f"Database error: {error}"}), 500
+
+    return jsonify({"status": "success", "message": "Akun berhasil dihapus"}), 200
