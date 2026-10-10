@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, timedelta
+from typing import Any
 
 import requests
 
@@ -7,7 +8,7 @@ import requests
 TENRAI_API = os.getenv('TENRAI_API', 'https://api.tenrai.org/v1').rstrip('/')
 CACHE_HOURS = 24
 TENRAI_TIMEOUT = (5, 10)
-LIST_CACHE = {}
+LIST_CACHE: dict[str, Any] = {}
 
 
 def create_http_session():
@@ -17,7 +18,7 @@ def create_http_session():
 HTTP_SESSION = create_http_session()
 
 
-def fetch_tenrai(path, params=None):
+def fetch_tenrai(path: str, params: dict[str, Any] | None = None):
     try:
         response = HTTP_SESSION.get(
             f'{TENRAI_API}{path}',
@@ -39,7 +40,7 @@ def fetch_tenrai(path, params=None):
         return None, ('Respons tenrai bukan JSON yang valid', 502)
 
 
-def parse_tenrai_response(item):
+def parse_tenrai_response(item: dict[str, Any]) -> dict[str, Any] | None:
     mal_id = item.get('mal_id')
     if not mal_id:
         return None
@@ -64,9 +65,9 @@ def parse_tenrai_response(item):
     }
 
 
-def save_many(items):
-    result = []
-    seen = set()
+def save_many(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[int] = set()
     for item in items:
         parsed = parse_tenrai_response(item)
         if parsed and parsed['mal_id'] not in seen:
@@ -75,15 +76,5 @@ def save_many(items):
     return result
 
 
-def is_fresh(timestamp):
+def is_fresh(timestamp: datetime) -> bool:
     return datetime.utcnow() - timestamp < timedelta(hours=CACHE_HOURS)
-
-
-def manga_by_ids(ids):
-    if not ids:
-        return []
-    return [item for item in LIST_CACHE.get('manga-by-id', []) if item['mal_id'] in ids]
-
-
-def upsert_manga(parsed):
-    return parsed

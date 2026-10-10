@@ -78,8 +78,6 @@ def delete_account():
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
 
-    print(f"[DELETE] email={email!r}")  # untuk debugging, boleh dihapus nanti
-
     if not email or not password:
         return jsonify({"status": "error", "message": "Email dan password wajib diisi"}), 400
 
